@@ -290,7 +290,7 @@ public:
      * place and return a reference to the same buffer, or it may return a
      * reference to an internal working buffer.  The number of output samples
      * need not be the same as the number of input samples. */
-    virtual Index<float> & process(Index<float> & data) = 0;
+    virtual Index<audio_sample> & process(Index<audio_sample> & data) = 0;
 
     /* Optional.  A seek is taking place; any buffers should be discarded.
      * Unless the "force" flag is set, the plugin may choose to override the
@@ -303,7 +303,7 @@ public:
     /* Exactly like process() except that any buffers should be drained (i.e.
      * the data processed and returned).  finish() will be called a second time
      * at the end of the last song in the playlist. */
-    virtual Index<float> & finish(Index<float> & data, bool end_of_playlist)
+    virtual Index<audio_sample> & finish(Index<audio_sample> & data, bool end_of_playlist)
     {
         return process(data);
     }

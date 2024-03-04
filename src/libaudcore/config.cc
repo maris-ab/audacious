@@ -79,6 +79,7 @@ static const char * const core_defaults[] = {
     "record_stream", aud::numeric_string<(int) OutputStream::AfterReplayGain>::str,
     "replay_gain_mode", aud::numeric_string<(int) ReplayGainMode::Track>::str,
     "replay_gain_preamp", "0",
+    "dsd_dop", "FALSE",
     "soft_clipping", "FALSE",
     "software_volume_control", "FALSE",
     "sw_volume_left", "100",

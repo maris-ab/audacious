@@ -137,6 +137,9 @@ static const ComboItem bitdepth_elements[] = {
     ComboItem ("24", 24),
     ComboItem ("32", 32),
     ComboItem (N_("Floating point"), 0)
+#ifdef DEF_AUDIO_FLOAT64
+    ,ComboItem (N_("Floating point 64"), 64)
+#endif
 };
 
 static const ComboItem record_elements[] = {
@@ -236,6 +239,8 @@ static const PreferencesWidget audio_page_widgets[] = {
     WidgetSpin (N_("Buffer size:"),
         WidgetInt (0, "output_buffer_size"),
         {100, 10000, 1000, N_("ms")}),
+    WidgetCheck (N_("DSD as DoP"),
+        WidgetBool (0, "dsd_dop", output_bit_depth_changed)),
     WidgetCheck (N_("Soft clipping"),
         WidgetBool (0, "soft_clipping")),
     WidgetCheck (N_("Use software volume control (not recommended)"),

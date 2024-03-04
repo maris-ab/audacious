@@ -1,6 +1,7 @@
 /*
  * audio.h
- * Copyright 2009-2013 John Lindgren
+ * Copyright 2009-2024 John Lindgren
+ * DSD, DoP and FLOAT64 support added by Maris Abele
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -22,13 +23,53 @@
 
 #define AUD_MAX_CHANNELS 10
 
+// Format definitions
 enum {
- FMT_FLOAT,
+ FMT_FLOAT, FMT_FLOAT64,
  FMT_S8, FMT_U8,
+ FMT_DSD_MSB8, FMT_DSD_LSB8, // DSD 1 byte MSB8 LSB8
  FMT_S16_LE, FMT_S16_BE, FMT_U16_LE, FMT_U16_BE,
- FMT_S24_LE, FMT_S24_BE, FMT_U24_LE, FMT_U24_BE, /* padded to 4 bytes */
+ FMT_DSD_MSB16_LE, FMT_DSD_MSB16_BE, // DSD 2 bytes
+ FMT_S24_LE, FMT_S24_BE, FMT_U24_LE, FMT_U24_BE, // PCM padded to 4 bytes
  FMT_S32_LE, FMT_S32_BE, FMT_U32_LE, FMT_U32_BE,
- FMT_S24_3LE, FMT_S24_3BE, FMT_U24_3LE, FMT_U24_3BE }; /* packed in 3 bytes */
+ FMT_DSD_MSB32_LE, FMT_DSD_MSB32_BE, // DSD 4 bytes
+ FMT_S24_3LE, FMT_S24_3BE, FMT_U24_3LE, FMT_U24_3BE, // PCM packed in 3 bytes
+ FMT_DSD_MSB24_3LE, FMT_DSD_MSB24_3BE }; // DSD packed in 3 bytes
+
+// Bytes in format
+#define FMT_SIZEOF(f) (((f) >= FMT_S24_3LE) ? 3 : \
+                       ((f) >= FMT_S24_LE) ? 4 : \
+                       ((f) >= FMT_S16_LE) ? 2 : \
+                       ((f) >= FMT_S8) ? 1 : \
+                       ((f) == FMT_FLOAT64) ? sizeof (double) : \
+                                              sizeof (float))
+
+// Singnificant bytes
+#define FMT_SIGNIFBYTES(f) (((f) >= FMT_S24_3LE) ? 3 : \
+                       ((f) >= FMT_S32_LE) ? 4 : \
+                       ((f) >= FMT_S24_LE) ? 3 : \
+                       ((f) >= FMT_S16_LE) ? 2 : \
+                       ((f) >= FMT_S8) ? 1 : \
+                       ((f) == FMT_FLOAT64) ? sizeof (double) : \
+                                              sizeof (float))
+
+static constexpr bool is_dsd(int format)
+{
+    return format == FMT_DSD_MSB8 || format == FMT_DSD_LSB8 ||
+           format == FMT_DSD_MSB16_LE || format == FMT_DSD_MSB16_BE ||
+           format == FMT_DSD_MSB32_LE || format == FMT_DSD_MSB32_BE ||
+           format == FMT_DSD_MSB24_3LE || format == FMT_DSD_MSB24_3BE;
+}
+
+// Define audio_sample type and PCM audio buffer format
+#if SIZE_MAX < UINT64_MAX
+#define FMT_AUDIO_SAMPLE FMT_FLOAT
+typedef float audio_sample;
+#else
+#define DEF_AUDIO_FLOAT64
+#define FMT_AUDIO_SAMPLE FMT_FLOAT64
+typedef double audio_sample;
+#endif
 
 struct ReplayGainInfo {
     float track_gain; /* dB */
@@ -77,6 +118,7 @@ constexpr uint64_t bswap64 (uint64_t x)
 #define FMT_U24_NE FMT_U24_BE
 #define FMT_S32_NE FMT_S32_BE
 #define FMT_U32_NE FMT_U32_BE
+#define FMT_DSD_MSB32_NE FMT_DSD_MSB32_BE
 #define FMT_S24_3NE FMT_S24_3BE
 #define FMT_U24_3NE FMT_U24_3BE
 
@@ -103,6 +145,7 @@ constexpr uint64_t bswap64 (uint64_t x)
 #define FMT_U24_NE FMT_U24_LE
 #define FMT_S32_NE FMT_S32_LE
 #define FMT_U32_NE FMT_U32_LE
+#define FMT_DSD_MSB32_NE FMT_DSD_MSB32_LE
 #define FMT_S24_3NE FMT_S24_3LE
 #define FMT_U24_3NE FMT_U24_3LE
 
@@ -123,17 +166,18 @@ constexpr uint64_t bswap64 (uint64_t x)
 
 #endif
 
-#define FMT_SIZEOF(f) (((f) >= FMT_S24_3LE) ? 3 : \
-                       ((f) >= FMT_S24_LE) ? 4 : \
-                       ((f) >= FMT_S16_LE) ? 2 : \
-                       ((f) >= FMT_S8) ? 1 : sizeof (float))
-
 void audio_interlace (const void * const * in, int format, int channels, void * out, int frames);
 void audio_deinterlace (const void * in, int format, int channels, void * const * out, int frames);
-void audio_from_int (const void * in, int format, float * out, int samples);
-void audio_to_int (const float * in, void * out, int format, int samples);
+void audio_from_int (const void * in, int format, audio_sample * out, int samples);
+void audio_to_int (const audio_sample * in, void * out, int format, int samples);
+void dsdaudio_from_in (const void * in, int format, void * out_, int samples, int channels);
+void dsdaudio_to_out (const void * in_, void * out, int format, int samples, int channels);
 void audio_amplify (float * data, int channels, int frames, const float * factors);
 void audio_amplify (float * data, int channels, int frames, StereoVolume volume);
-void audio_soft_clip (float * data, int samples);
+#ifdef DEF_AUDIO_FLOAT64
+void audio_amplify (double * data, int channels, int frames, const float * factors);
+void audio_amplify (double * data, int channels, int frames, StereoVolume volume);
+#endif
+void audio_soft_clip (audio_sample * data, int samples);
 
 #endif /* LIBAUDCORE_AUDIO_H */

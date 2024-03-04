@@ -52,7 +52,7 @@ static bool active;
 static int channels, rate;
 static float a[AUD_EQ_NBANDS][2]; /* A weights */
 static float b[AUD_EQ_NBANDS][2]; /* B weights */
-static float wqv[AUD_MAX_CHANNELS][AUD_EQ_NBANDS]
+static audio_sample wqv[AUD_MAX_CHANNELS][AUD_EQ_NBANDS]
                 [2]; /* Circular buffer for W data */
 static float gv[AUD_MAX_CHANNELS]
                [AUD_EQ_NBANDS]; /* Gain factor for each channel and band */
@@ -107,7 +107,7 @@ static void eq_set_bands_real(aud::mutex::holder &, double preamp,
     }
 }
 
-void eq_filter(float * data, int samples)
+void eq_filter(audio_sample * data, int samples)
 {
     auto mh = mutex.take();
 
@@ -117,18 +117,18 @@ void eq_filter(float * data, int samples)
     for (int channel = 0; channel < channels; channel++)
     {
         float * g = gv[channel]; /* Gain factor */
-        float * end = data + samples;
+        const audio_sample * end = data + samples;
 
-        for (float * f = data + channel; f < end; f += channels)
+        for (audio_sample * f = data + channel; f < end; f += channels)
         {
-            float yt = *f; /* Current input sample */
+            audio_sample yt = *f; /* Current input sample */
 
             for (int k = 0; k < K; k++)
             {
                 /* Pointer to circular buffer wq */
-                float * wq = wqv[channel][k];
+                audio_sample * wq = wqv[channel][k];
                 /* Calculate output from AR part of current filter */
-                float w = yt * b[k][0] + wq[0] * a[k][0] + wq[1] * a[k][1];
+                audio_sample w = yt * b[k][0] + wq[0] * a[k][0] + wq[1] * a[k][1];
 
                 /* Calculate output from MA part of current filter */
                 yt += (w + wq[1] * b[k][1]) * g[k];

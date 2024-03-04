@@ -25,6 +25,7 @@
 
 #include "index.h"
 #include "objects.h"
+#include "audio.h"
 
 class InputPlugin;
 class Plugin;
@@ -62,9 +63,9 @@ void record_cleanup();
 
 /* effect.cc */
 void effect_start(int & channels, int & rate);
-Index<float> & effect_process(Index<float> & data);
+Index<audio_sample> & effect_process(Index<audio_sample> & data);
 bool effect_flush(bool force);
-Index<float> & effect_finish(Index<float> & data, bool end_of_playlist);
+Index<audio_sample> & effect_finish(Index<audio_sample> & data, bool end_of_playlist);
 int effect_adjust_delay(int delay);
 
 bool effect_plugin_start(PluginHandle * plugin);
@@ -74,7 +75,7 @@ void effect_plugin_stop(PluginHandle * plugin);
 void eq_init();
 void eq_cleanup();
 void eq_set_format(int new_channels, int new_rate);
-void eq_filter(float * data, int samples);
+void eq_filter(audio_sample * data, int samples);
 
 /* eventqueue.cc */
 void event_queue_pause();
@@ -148,7 +149,7 @@ struct IntHashKey
 
 /* vis-runner.cc */
 void vis_runner_start_stop(bool playing, bool paused);
-void vis_runner_pass_audio(int time, const Index<float> & data, int channels,
+void vis_runner_pass_audio(int time, const Index<audio_sample> & data, int channels,
                            int rate);
 void vis_runner_flush();
 void vis_runner_enable(bool enable);

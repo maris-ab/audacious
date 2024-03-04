@@ -1,6 +1,7 @@
 /*
  * output.c
- * Copyright 2009-2015 John Lindgren
+ * Copyright 2009-2024 John Lindgren
+ * DSD, DoP and FLOAT64 support added by Maris Abele
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -159,8 +160,9 @@ static int64_t in_frames, out_bytes_written;
 static ReplayGainInfo gain_info;
 static bool gain_info_valid;
 
-static Index<float> buffer1;
-static Index<char> buffer2;
+static Index<audio_sample> floatbuffer; // Float audio
+static Index<uint8_t> dsdbuffer; // DSD audio
+static Index<char> outbuffer;
 
 static inline int get_format(bool & automatic)
 {
@@ -169,16 +171,30 @@ static inline int get_format(bool & automatic)
     switch (aud_get_int("output_bit_depth"))
     {
     case 16:
+        if (is_dsd(in_format)) // No DoP for 16 bit
+            return FMT_DSD_MSB16_BE;
         return FMT_S16_NE;
     case 24:
+        if (is_dsd(in_format) && !aud_get_bool("dsd_dop"))
+            return FMT_DSD_MSB24_3BE;
         return FMT_S24_3NE;
     case 32:
+        if (is_dsd(in_format) && !aud_get_bool("dsd_dop"))
+            return FMT_DSD_MSB32_BE;
         return FMT_S32_NE;
-
+    case 64:
+        if (is_dsd(in_format))
+            return FMT_DSD_MSB32_BE;
+        return FMT_FLOAT64;
     // return FMT_FLOAT for "auto" as well
     case -1:
         automatic = true;
     default:
+        if (is_dsd(in_format))
+        {
+            if (aud_get_bool("dsd_dop")) return FMT_S32_NE;
+            return FMT_DSD_MSB32_BE;
+        }
         return FMT_FLOAT;
     }
 }
@@ -210,8 +226,9 @@ static void cleanup_output(UnsafeLock & lock)
 
     state.set_output(lock, false);
 
-    buffer1.clear();
-    buffer2.clear();
+    floatbuffer.clear();
+    dsdbuffer.clear();
+    outbuffer.clear();
 
     cop->close_audio();
     vis_runner_start_stop(false, false);
@@ -267,6 +284,12 @@ static void setup_output(UnsafeLock & lock, bool new_input, bool pause)
         return;
     }
 
+    if (is_dsd(in_format))
+    {   effect_rate = in_rate;
+        if(aud_get_bool("dsd_dop"))
+            effect_rate = effect_rate * FMT_SIZEOF(out_format) / 2;
+    }
+
     AUDINFO("Setup output, format %d, %d channels, %d Hz.\n", format,
             effect_channels, effect_rate);
 
@@ -276,18 +299,51 @@ static void setup_output(UnsafeLock & lock, bool new_input, bool pause)
     while (!open_audio_with_info(cop, in_filename, in_tuple, format,
                                  effect_rate, effect_channels, error))
     {
-        if (automatic && format == FMT_FLOAT)
-            format = FMT_S32_NE;
-        else if (automatic && format == FMT_S32_NE)
-            format = FMT_S16_NE;
-        else if (format == FMT_S24_3NE)
-            format =
-                FMT_S24_NE; /* some output plugins support only padded 24-bit */
+        if (!is_dsd(in_format) || aud_get_bool("dsd_dop"))
+        {   // PCM
+            if (automatic && format == FMT_FLOAT)
+#ifdef DEF_AUDIO_FLOAT64
+                format = FMT_FLOAT64;
+            else if (automatic && format == FMT_FLOAT64)
+#endif
+                format = FMT_S32_NE;
+            else if (automatic && format == FMT_S32_NE)
+                format = FMT_S24_NE; // some output plugins support only padded 24-bit
+            else if (automatic && format == FMT_S24_NE)
+                format = FMT_S24_3NE;
+            else if (automatic && format == FMT_S24_3NE)
+                format = FMT_S16_NE;
+            else if (format == FMT_S16_NE)
+                {
+                    format = FMT_S32_NE; // Default format after fail
+                    automatic = false;
+                }
+            else
+            {
+                aud_ui_show_error(error ? (const char *)error
+                                        : _("Error opening PCM output stream"));
+                return;
+            }
+        }
         else
-        {
-            aud_ui_show_error(error ? (const char *)error
-                                    : _("Error opening output stream"));
-            return;
+        {   // DSD
+            if (automatic && format == FMT_FLOAT)
+                format = FMT_DSD_MSB32_NE;
+            else if (automatic && format == FMT_DSD_MSB32_NE)
+                format = FMT_DSD_MSB16_BE; // some output plugins support only padded 24-bit
+            else if (automatic && format == FMT_DSD_MSB16_BE)
+                format = FMT_DSD_MSB24_3BE;
+            else if (automatic && format == FMT_DSD_MSB24_3BE)
+                {
+                    format = FMT_DSD_MSB32_NE; // Default format after fail
+                    automatic = false;
+                }
+            else
+            {
+                aud_ui_show_error(error ? (const char *)error
+                                        : _("Error opening DSD output stream"));
+                return;
+            }
         }
 
         AUDINFO("Falling back to format %d.\n", format);
@@ -300,6 +356,9 @@ static void setup_output(UnsafeLock & lock, bool new_input, bool pause)
     out_rate = effect_rate;
 
     out_bytes_per_sec = FMT_SIZEOF(format) * out_channels * out_rate;
+    if (is_dsd(in_format) && aud_get_bool("dsd_dop"))
+        out_bytes_per_sec = out_bytes_per_sec * 2 / FMT_SIZEOF(out_format);
+
     out_bytes_held = 0;
     out_bytes_written = 0;
 
@@ -359,7 +418,7 @@ static void flush_output(SafeLock &)
     vis_runner_flush();
 }
 
-static void apply_replay_gain(SafeLock &, Index<float> & data)
+static void apply_replay_gain(SafeLock &, Index<audio_sample> & data)
 {
     if (!aud_get_bool("enable_replay_gain"))
         return;
@@ -394,7 +453,7 @@ static void apply_replay_gain(SafeLock &, Index<float> & data)
         audio_amplify(data.begin(), 1, data.len(), &factor);
 }
 
-static void write_secondary(SafeLock &, const Index<float> & data)
+static void write_secondary(SafeLock &, const Index<audio_sample> & data)
 {
     assert(state.secondary());
 
@@ -405,45 +464,62 @@ static void write_secondary(SafeLock &, const Index<float> & data)
         begin += sop->write_audio(begin, end - begin);
 }
 
-static void write_output(UnsafeLock & lock, Index<float> & data)
+static void write_output(UnsafeLock & lock, Index<audio_sample> & data)
 {
     assert(state.output());
+    const void * out_data;
 
-    if (!data.len())
-        return;
-
-    if (state.secondary() && record_stream == OutputStream::AfterEffects)
-        write_secondary(lock, data);
-
-    int out_time =
-        aud::rescale<int64_t>(out_bytes_written, out_bytes_per_sec, 1000);
-    vis_runner_pass_audio(out_time, data, out_channels, out_rate);
-
-    eq_filter(data.begin(), data.len());
-
-    if (state.secondary() && record_stream == OutputStream::AfterEqualizer)
-        write_secondary(lock, data);
-
-    if (aud_get_bool("software_volume_control"))
+    if (is_dsd(in_format))
     {
-        StereoVolume v = {aud_get_int("sw_volume_left"),
-                          aud_get_int("sw_volume_right")};
-        audio_amplify(data.begin(), out_channels, data.len() / out_channels, v);
+        // DSD audio
+        if (!dsdbuffer.len())
+            return;
+        if (!is_dsd(out_format)) // is_dop
+            outbuffer.resize(dsdbuffer.len()*FMT_SIZEOF(out_format)/2);
+        else
+            outbuffer.resize(dsdbuffer.len());
+        dsdaudio_to_out(dsdbuffer.begin(), outbuffer.begin(), out_format, dsdbuffer.len(), out_channels);
+        out_data = outbuffer.begin();
+        out_bytes_held = outbuffer.len();
     }
-
-    if (aud_get_bool("soft_clipping"))
-        audio_soft_clip(data.begin(), data.len());
-
-    const void * out_data = data.begin();
-
-    if (out_format != FMT_FLOAT)
+    else
     {
-        buffer2.resize(FMT_SIZEOF(out_format) * data.len());
-        audio_to_int(data.begin(), buffer2.begin(), out_format, data.len());
-        out_data = buffer2.begin();
-    }
+        // Float audio
+        if (!data.len())
+            return;
 
-    out_bytes_held = FMT_SIZEOF(out_format) * data.len();
+        if (state.secondary() && record_stream == OutputStream::AfterEffects)
+            write_secondary(lock, data);
+
+        int out_time =
+            aud::rescale<int64_t>(out_bytes_written, out_bytes_per_sec, 1000);
+        vis_runner_pass_audio(out_time, data, out_channels, out_rate);
+
+        eq_filter(data.begin(), data.len());
+
+        if (state.secondary() && record_stream == OutputStream::AfterEqualizer)
+            write_secondary(lock, data);
+
+        if (aud_get_bool("software_volume_control"))
+        {
+            StereoVolume v = {aud_get_int("sw_volume_left"),
+                              aud_get_int("sw_volume_right")};
+            audio_amplify(data.begin(), out_channels, data.len() / out_channels, v);
+        }
+
+        if (aud_get_bool("soft_clipping"))
+            audio_soft_clip(data.begin(), data.len());
+        out_data = data.begin();
+
+        if (out_format != FMT_AUDIO_SAMPLE)
+        {
+            outbuffer.resize(FMT_SIZEOF(out_format) * data.len());
+            audio_to_int(data.begin(), outbuffer.begin(), out_format, data.len());
+            out_data = outbuffer.begin();
+        }
+
+        out_bytes_held = FMT_SIZEOF(out_format) * data.len();
+    }
 
     while (out_bytes_held && !state.resetting())
     {
@@ -495,24 +571,33 @@ static bool process_audio(UnsafeLock & lock, const void * data, int size,
         }
     }
 
+    // DSD audio
+    if (is_dsd(in_format))
+    {
+        dsdbuffer.resize(size);
+        dsdaudio_from_in(data, in_format, dsdbuffer.begin(), samples, in_channels);
+
+        in_frames += samples / in_channels / 4 * FMT_SIZEOF(in_format);
+
+        write_output(lock, floatbuffer);
+        return !stopped;
+    }
+
     in_frames += samples / in_channels;
 
-    buffer1.resize(samples);
-
-    if (in_format == FMT_FLOAT)
-        memcpy(buffer1.begin(), data, sizeof(float) * samples);
-    else
-        audio_from_int(data, in_format, buffer1.begin(), samples);
+    // Float audio
+    floatbuffer.resize(samples);
+    audio_from_int(data, in_format, floatbuffer.begin(), samples);
 
     if (state.secondary() && record_stream == OutputStream::AsDecoded)
-        write_secondary(lock, buffer1);
+        write_secondary(lock, floatbuffer);
 
-    apply_replay_gain(lock, buffer1);
+    apply_replay_gain(lock, floatbuffer);
 
     if (state.secondary() && record_stream == OutputStream::AfterReplayGain)
-        write_secondary(lock, buffer1);
+        write_secondary(lock, floatbuffer);
 
-    write_output(lock, effect_process(buffer1));
+    write_output(lock, effect_process(floatbuffer));
 
     return !stopped;
 }
@@ -521,8 +606,9 @@ static void finish_effects(UnsafeLock & lock, bool end_of_playlist)
 {
     assert(state.output());
 
-    buffer1.resize(0);
-    write_output(lock, effect_finish(buffer1, end_of_playlist));
+    floatbuffer.resize(0);
+    dsdbuffer.resize(0);
+    write_output(lock, effect_finish(floatbuffer, end_of_playlist));
 }
 
 bool output_open_audio(const String & filename, const Tuple & tuple, int format,

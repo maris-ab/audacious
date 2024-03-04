@@ -136,7 +136,7 @@ void vis_runner_start_stop(bool new_playing, bool new_paused)
     start_stop(mh, new_playing, new_paused);
 }
 
-void vis_runner_pass_audio(int time, const Index<float> & data, int channels,
+void vis_runner_pass_audio(int time, const Index<audio_sample> & data, int channels,
                            int rate)
 {
     auto mh = mutex.take();
@@ -197,8 +197,18 @@ void vis_runner_pass_audio(int time, const Index<float> & data, int channels,
 
         int copy = aud::min(data.len() - at,
                             channels * (FRAMES_PER_NODE - current_frames));
+#ifdef DEF_AUDIO_FLOAT64
+        float * destdata = current_node->data + channels * current_frames;
+        const audio_sample * srcdata = &data[at];
+        const audio_sample * end = srcdata + copy;
+        while (srcdata < end)
+        {
+            *(destdata++) = (float) *(srcdata++);
+        }
+#else
         memcpy(current_node->data + channels * current_frames, &data[at],
                sizeof(float) * copy);
+#endif
         current_frames += copy / channels;
 
         if (current_frames < FRAMES_PER_NODE)
