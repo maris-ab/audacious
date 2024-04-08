@@ -115,6 +115,11 @@ EXPORT void init()
 
     aud_config_set_defaults("audqt", audqt_defaults);
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0) && defined(_WIN32)
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::Floor);
+#endif
+
     static char app_name[] = "audacious";
     static int dummy_argc = 1;
     static char * dummy_argv[] = {app_name, nullptr};
@@ -169,10 +174,6 @@ EXPORT void init()
     log_init();
 }
 
-EXPORT void run() { qApp->exec(); }
-
-EXPORT void quit() { qApp->quit(); }
-
 EXPORT void cleanup()
 {
     if (--init_count)
@@ -188,11 +189,6 @@ EXPORT void cleanup()
     log_cleanup();
 
     delete qApp;
-}
-
-EXPORT QIcon get_icon(const char * name)
-{
-    return QIcon::fromTheme(name);
 }
 
 EXPORT QGradientStops dark_bg_gradient(const QColor & base)
