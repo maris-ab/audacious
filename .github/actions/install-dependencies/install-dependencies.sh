@@ -2,9 +2,9 @@
 
 # --- Dependency configuration ---
 #
-# ubuntu-20.04:      Qt 5 + GTK2
-# ubuntu-22.04:      Qt 5 + GTK3
-# Windows:           Qt 6 + GTK2
+# ubuntu-20.04:      Qt 5 + GTK 2
+# ubuntu-22.04:      Qt 5 + GTK 3
+# Windows:           Qt 6 + GTK 2
 # macOS (Autotools): Qt 5 - GTK
 # macOS (Meson):     Qt 6 - GTK
 
@@ -39,13 +39,6 @@ case "$os" in
     else
       brew install qt@5 automake
     fi
-
-    # Install Python setuptools for the distutils module which is still
-    # required by gdbus-codegen and no longer shipped with Python >= 3.12.
-    #
-    # - https://peps.python.org/pep-0632
-    # - https://github.com/python/cpython/issues/95299
-    python3 -m pip install setuptools
     ;;
 
   windows*)

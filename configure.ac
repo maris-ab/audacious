@@ -6,7 +6,7 @@ dnl Initialize
 dnl ==========
 
 AC_PREREQ([2.59])
-AC_INIT([audacious], [4.4-devel])
+AC_INIT([audacious], [4.4-beta1])
 AC_COPYRIGHT([Copyright (C) 2001-2024 Audacious developers and others])
 
 AC_DEFINE_UNQUOTED(PACKAGE, "$PACKAGE_NAME", [Name of package])
@@ -149,7 +149,7 @@ echo ""
 echo "  Install path:                           $prefix"
 echo ""
 echo "  D-Bus support:                          $USE_DBUS"
-echo "  GTK+ support:                           $USE_GTK"
+echo "  GTK support:                            $USE_GTK"
 echo "  Qt support:                             $USE_QT"
 echo "  libarchive support:                     $USE_LIBARCHIVE"
 echo "  Valgrind analysis support:              $enable_valgrind"
