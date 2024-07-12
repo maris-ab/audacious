@@ -6,6 +6,9 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>BSD-2-Clause</project_license>
   <name>Audacious</name>
+  <developer id="org.atheme.audacious">
+    <name>Audacious developers</name>
+  </developer>
   <summary>Lightweight audio player</summary>
   <description>
     <p>
@@ -26,6 +29,7 @@
   <url type="homepage">https://audacious-media-player.org</url>
   <url type="bugtracker">https://github.com/audacious-media-player/audacious/issues</url>
   <releases>
+    <release date="2024-06-12" version="4.4"></release>
     <release date="2023-04-29" version="4.3.1"></release>
     <release date="2023-03-05" version="4.3"></release>
     <release date="2022-07-09" version="4.2"></release>

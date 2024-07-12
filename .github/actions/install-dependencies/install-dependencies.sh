@@ -4,6 +4,7 @@
 #
 # ubuntu-20.04:      Qt 5 + GTK 2
 # ubuntu-22.04:      Qt 5 + GTK 3
+# ubuntu-24.04:      Qt 6 + GTK 3
 # Windows:           Qt 6 + GTK 2
 # macOS (Autotools): Qt 5 - GTK
 # macOS (Meson):     Qt 6 - GTK
@@ -19,17 +20,25 @@ fi
 case "$os" in
   ubuntu-20.04)
     if [ "$build_system" = 'meson' ]; then
-      sudo apt-get -qq update && sudo apt-get install libgtk2.0-dev qtbase5-dev meson
+      sudo apt-get -qq update && sudo apt-get install libgtk2.0-dev qtbase5-dev libqt5svg5-dev meson
     else
-      sudo apt-get -qq update && sudo apt-get install libgtk2.0-dev qtbase5-dev
+      sudo apt-get -qq update && sudo apt-get install libgtk2.0-dev qtbase5-dev libqt5svg5-dev
+    fi
+    ;;
+
+  ubuntu-22.04)
+    if [ "$build_system" = 'meson' ]; then
+      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qtbase5-dev libqt5svg5-dev gettext meson
+    else
+      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qtbase5-dev libqt5svg5-dev gettext
     fi
     ;;
 
   ubuntu*)
     if [ "$build_system" = 'meson' ]; then
-      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qtbase5-dev gettext meson
+      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qt6-base-dev qt6-svg-dev gettext meson
     else
-      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qtbase5-dev gettext
+      sudo apt-get -qq update && sudo apt-get install libgtk-3-dev qt6-base-dev qt6-svg-dev gettext
     fi
     ;;
 

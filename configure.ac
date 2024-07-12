@@ -6,7 +6,7 @@ dnl Initialize
 dnl ==========
 
 AC_PREREQ([2.59])
-AC_INIT([audacious], [4.4-beta1])
+AC_INIT([audacious], [4.4])
 AC_COPYRIGHT([Copyright (C) 2001-2024 Audacious developers and others])
 
 AC_DEFINE_UNQUOTED(PACKAGE, "$PACKAGE_NAME", [Name of package])
@@ -24,6 +24,8 @@ AUD_COMMON_PROGS
 
 BUILDSYS_INIT
 BUILDSYS_SHARED_LIB
+BUILDSYS_PLUGIN
+
 AC_DEFINE_UNQUOTED(PLUGIN_SUFFIX, "$PLUGIN_SUFFIX", [Suffix for plugins])
 
 m4_ifdef([PKG_INSTALLDIR], [PKG_INSTALLDIR], AC_SUBST([pkgconfigdir], ${libdir}/pkgconfig))
