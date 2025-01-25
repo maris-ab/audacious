@@ -1,6 +1,7 @@
 /*
  * song-window-qt.cc
  * Copyright 2021 Steve Storey
+ * Copyright 2025 Thomas Lange
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -19,7 +20,6 @@
 
 #include "libaudqt.h"
 
-#include <QAbstractButton>
 #include <QAbstractListModel>
 #include <QCheckBox>
 #include <QDialog>
@@ -30,13 +30,16 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <QVector>
 
+#include <libaudcore/hook.h>
 #include <libaudcore/i18n.h>
 #include <libaudcore/playlist.h>
+#include <libaudcore/runtime.h>
 
 namespace audqt
 {
@@ -46,9 +49,9 @@ static void do_jump(int entry)
     if (entry < 0)
         return;
 
-    auto playlist = Playlist::active_playlist ();
-    playlist.set_position (entry);
-    playlist.start_playback ();
+    auto playlist = Playlist::active_playlist();
+    playlist.set_position(entry);
+    playlist.start_playback();
 }
 
 static void do_queue(int entry)
@@ -56,12 +59,12 @@ static void do_queue(int entry)
     if (entry < 0)
         return;
 
-    auto playlist = Playlist::active_playlist ();
-    int queued = playlist.queue_find_entry (entry);
+    auto playlist = Playlist::active_playlist();
+    int queued = playlist.queue_find_entry(entry);
     if (queued >= 0)
-        playlist.queue_remove (queued);
+        playlist.queue_remove(queued);
     else
-        playlist.queue_insert (-1, entry);
+        playlist.queue_insert(-1, entry);
 }
 
 static bool is_queued(int entry)
@@ -69,8 +72,8 @@ static bool is_queued(int entry)
     if (entry < 0)
         return false;
 
-    auto playlist = Playlist::active_playlist ();
-    int queued = playlist.queue_find_entry (entry);
+    auto playlist = Playlist::active_playlist();
+    int queued = playlist.queue_find_entry(entry);
     return queued >= 0;
 }
 
@@ -90,20 +93,11 @@ public:
         NColumns
     };
 
-    static void selectFirstRow(QTreeView* treeView, SongListModel* treeModel)
-    {
-        QModelIndex rootIndex = treeView->rootIndex();
-        QModelIndex rootChildIndex = treeModel->index(0, 0, rootIndex);
-        if (rootChildIndex.isValid()) {
-            treeView->selectionModel()->select(rootChildIndex,
-                                               QItemSelectionModel::Rows | QItemSelectionModel::Select);
-        }
-    }
-
-    void update(QItemSelectionModel * sel, QString * filter);
+    void update(const QString & filter);
     void toggleQueueSelected();
     void jumpToSelected();
     bool isSelectedQueued();
+    void selectFirstRow(const QTreeView & treeView);
     void selectionChanged(const QItemSelection & selected);
 
 protected:
@@ -120,37 +114,34 @@ private:
     int m_rows = 0;
     bool m_in_update = false;
     int m_selected_row_index = -1;
-    QVector<PlaylistEntry> * m_filteredTuples;
+    QVector<PlaylistEntry> m_filteredTuples;
 };
 
 void SongListModel::toggleQueueSelected()
 {
-    do_queue(m_filteredTuples->value(m_selected_row_index).index - 1);
+    do_queue(m_filteredTuples.value(m_selected_row_index).index - 1);
 }
 
 void SongListModel::jumpToSelected()
 {
-    do_jump(m_filteredTuples->value(m_selected_row_index).index - 1);
+    do_jump(m_filteredTuples.value(m_selected_row_index).index - 1);
 }
 
 bool SongListModel::isSelectedQueued()
 {
-    return is_queued(m_filteredTuples->value(m_selected_row_index).index - 1);
+    return is_queued(m_filteredTuples.value(m_selected_row_index).index - 1);
 }
 
 QVariant SongListModel::data(const QModelIndex & index, int role) const
 {
     if (role == Qt::DisplayRole)
     {
-        int entry = index.row();
+        PlaylistEntry entry = m_filteredTuples.value(index.row());
 
-        PlaylistEntry tuple = m_filteredTuples->value(entry);
         if (index.column() == ColumnEntry)
-            return tuple.index;
-        else if (index.column() == ColumnTitle)
-        {
-            return tuple.title;
-        }
+            return entry.index;
+        if (index.column() == ColumnTitle)
+            return entry.title;
     }
     else if (role == Qt::TextAlignmentRole && index.column() == ColumnEntry)
         return int(Qt::AlignRight | Qt::AlignVCenter);
@@ -158,39 +149,47 @@ QVariant SongListModel::data(const QModelIndex & index, int role) const
     return QVariant();
 }
 
-static bool includeEntry(int index, QString* title , QString * filter) {
-    if (filter == nullptr)
+static bool includeEntry(const QString & title, const QString & filter)
+{
+    if (filter.isEmpty())
         return true;
+
     // Split the filter into different words, where all sub-words must
     // be contained within the title to keep it in the list
-    QStringList parts = filter->split(" ");
-    for (int i = 0; i < parts.size(); i++)
-        if (parts[i].length() > 0 && !title->contains(parts[i], Qt::CaseInsensitive))
+    QStringList parts = filter.split(" ");
+    int n_parts = parts.size();
+    for (int i = 0; i < n_parts; i++)
+    {
+        if (parts[i].length() > 0 && !title.contains(parts[i], Qt::CaseInsensitive))
             return false;
+    }
+
     return true;
 }
 
-void SongListModel::update(QItemSelectionModel * sel, QString * filter)
+void SongListModel::update(const QString & filter)
 {
-    QVector<PlaylistEntry> * filteredTuples = new QVector<PlaylistEntry>;
+    QVector<PlaylistEntry> filteredTuples;
     auto playlist = Playlist::active_playlist();
-    // Copy the playlist, filtering the rows
     int playlist_size = playlist.n_entries();
+
+    // Copy the playlist, filtering the rows
     for (int i = 0; i < playlist_size; i++)
     {
         Tuple playlistTuple = playlist.entry_tuple(i, Playlist::NoWait);
-        QString* title = new QString(playlistTuple.get_str(Tuple::FormattedTitle));
-        if (includeEntry(i, title, filter))
+        QString title = QString(playlistTuple.get_str(Tuple::FormattedTitle));
+        if (includeEntry(title, filter))
         {
-            PlaylistEntry* localEntry = new PlaylistEntry;
-            localEntry->index = i + 1;
-            localEntry->title = *title;
-            filteredTuples->append(*localEntry);
+            PlaylistEntry localEntry = {
+                .index = i + 1,
+                .title = title
+            };
+            filteredTuples.append(localEntry);
         }
     }
     m_filteredTuples = filteredTuples;
 
-    int rows = m_filteredTuples->size();
+    int rows = m_filteredTuples.size();
     int keep = aud::min(rows, m_rows);
 
     m_in_update = true;
@@ -218,65 +217,71 @@ void SongListModel::update(QItemSelectionModel * sel, QString * filter)
     m_in_update = false;
 }
 
+void SongListModel::selectFirstRow(const QTreeView & treeView)
+{
+    QModelIndex rootIndex = treeView.rootIndex();
+    QModelIndex rootChildIndex = index(0, 0, rootIndex);
+
+    if (rootChildIndex.isValid())
+    {
+        treeView.selectionModel()->select(
+            rootChildIndex,
+            QItemSelectionModel::Rows | QItemSelectionModel::ClearAndSelect);
+    }
+}
+
 void SongListModel::selectionChanged(const QItemSelection & selected)
 {
     if (m_in_update)
         return;
 
-    for (auto & index : selected.indexes())
-        // Should just be a single entry, but we'll take the last
-        // one
-        m_selected_row_index = index.row();
+    QModelIndexList indexes = selected.indexes();
+    m_selected_row_index = indexes.size() > 0 ? indexes.last().row() : -1;
 }
-
 
 class SongsWindow : public QDialog
 {
 public:
-    static SongsWindow * get_instance()
-    {
-        if (!instance)
-            (void)new SongsWindow;
-        return instance;
-    }
+    SongsWindow(QWidget * parent = nullptr);
 
-    static void destroy_instance()
+    QSize sizeHint() const override
     {
-        if (instance)
-            delete instance;
+        return {5 * sizes.OneInch, 5 * sizes.OneInch};
     }
 
 protected:
     void keyPressEvent(QKeyEvent * event) override;
 
 private:
-    static SongsWindow * instance;
     SongListModel m_songListModel;
     QTreeView m_treeview;
     QLineEdit m_filterEdit;
     QCheckBox m_closeAfterJump;
-    QPushButton m_queueAndUnqueueButton;
+    QPushButton m_queueAndUnqueueButton, m_jumpButton;
 
-    SongsWindow();
-    ~SongsWindow() { instance = nullptr; }
+    const HookReceiver<SongsWindow, Playlist::UpdateLevel> //
+        update_hook{"playlist update", this, &SongsWindow::updatePlaylist};
+    const HookReceiver<SongsWindow> //
+        activate_hook{"playlist activate", this, &SongsWindow::updateModel};
 
-    void update()
+    void updateModel()
     {
-        m_songListModel.update(m_treeview.selectionModel(), nullptr);
+        QString filter = m_filterEdit.text();
+        m_songListModel.update(filter);
+        m_songListModel.selectFirstRow(m_treeview);
+    }
+
+    void updatePlaylist(Playlist::UpdateLevel level)
+    {
+        if (level >= Playlist::Metadata)
+            updateModel();
     }
 
     void jumpToSelected()
     {
         m_songListModel.jumpToSelected();
         if (m_closeAfterJump.isChecked())
-            destroy_instance();
-    }
-
-    void onFilterChanged()
-    {
-        QString currentText = m_filterEdit.text();
-        m_songListModel.update(m_treeview.selectionModel(), &currentText);
-        SongListModel::selectFirstRow(&m_treeview, &m_songListModel);
+            QDialog::close();
     }
 
     void updateQueueButton()
@@ -284,25 +289,26 @@ private:
         m_queueAndUnqueueButton.setText(m_songListModel.isSelectedQueued()
                 ? translate_str(N_("Un_queue")) : translate_str(N_("_Queue")));
     }
+
+    void updateButtonStates()
+    {
+        bool enable = m_treeview.selectionModel()->hasSelection();
+        m_queueAndUnqueueButton.setEnabled(enable);
+        m_jumpButton.setEnabled(enable);
+    }
 };
 
-/* static data */
-SongsWindow * SongsWindow::instance = nullptr;
+static QPointer<SongsWindow> s_songs_window;
 
-SongsWindow::SongsWindow()
+SongsWindow::SongsWindow(QWidget * parent) : QDialog(parent)
 {
-    /* initialize static data */
-    instance = this;
-
-    setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(_("Jump to Song"));
     setWindowRole("jump-to-song");
-    setContentsMargins(0, 0, 0, 0);
+    setContentsMargins(margins.FourPt);
 
     auto vbox_parent = make_vbox(this);
 
     QWidget * content = new QWidget;
-    content->setContentsMargins(margins.FourPt);
     vbox_parent->addWidget(content);
 
     auto vbox_content = make_vbox(content);
@@ -313,13 +319,14 @@ SongsWindow::SongsWindow()
     vbox_content->addWidget(filter_box);
 
     auto hbox_filter = make_hbox(filter_box);
-    auto label_filter = new QLabel(_("Filter: "), this);
+    auto label_filter = new QLabel(translate_str(N_("_Filter:")), this);
+    label_filter->setBuddy(&m_filterEdit);
     hbox_filter->addWidget(label_filter);
     m_filterEdit.setClearButtonEnabled(true);
     m_filterEdit.setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     hbox_filter->addWidget(&m_filterEdit);
     QObject::connect(&m_filterEdit, &QLineEdit::textChanged, [this]() {
-        this->onFilterChanged();
+        this->updateModel();
     });
     // **** END Filter box ****
 
@@ -330,21 +337,23 @@ SongsWindow::SongsWindow()
     m_treeview.setIndentation(0);
     m_treeview.setModel(&m_songListModel);
     m_treeview.setSelectionMode(QAbstractItemView::SingleSelection);
+    m_treeview.setUniformRowHeights(true);
     auto header = m_treeview.header();
     header->setSectionResizeMode(SongListModel::ColumnEntry,
                                  QHeaderView::Interactive);
-    header->resizeSection(SongListModel::ColumnEntry,
-                          audqt::to_native_dpi(50));
-    QObject::connect(m_treeview.selectionModel(), &QItemSelectionModel::selectionChanged,
+    header->resizeSection(SongListModel::ColumnEntry, audqt::to_native_dpi(50));
+    QObject::connect(m_treeview.selectionModel(),
+                     &QItemSelectionModel::selectionChanged,
                      [this](const QItemSelection & selected) {
                          this->m_songListModel.selectionChanged(selected);
                          this->updateQueueButton();
+                         this->updateButtonStates();
                      });
     QObject::connect(&m_treeview, &QAbstractItemView::doubleClicked, [this]() {
         this->jumpToSelected();
     });
 
-    update();
+    updateModel();
     vbox_content->addWidget(&m_treeview);
     // **** END Track list ****
 
@@ -353,33 +362,40 @@ SongsWindow::SongsWindow()
     vbox_content->addWidget(footerWidget);
     auto hbox_footer = make_hbox(footerWidget);
 
-    m_closeAfterJump.setChecked(true);
+    m_closeAfterJump.setChecked(aud_get_bool("audqt", "close_jtf_dialog"));
     m_closeAfterJump.setText(translate_str(N_("C_lose on jump")));
     hbox_footer->addWidget(&m_closeAfterJump);
 
     QDialogButtonBox * bbox = new QDialogButtonBox(QDialogButtonBox::Close);
     bbox->addButton(&m_queueAndUnqueueButton, QDialogButtonBox::ApplyRole);
     m_queueAndUnqueueButton.setText(translate_str(N_("_Queue")));
-    QPushButton* btn_Jump = bbox->addButton(translate_str(N_("_Jump")), QDialogButtonBox::AcceptRole);
-    QPushButton* btn_Close = bbox->button(QDialogButtonBox::Close);
+    bbox->addButton(&m_jumpButton, QDialogButtonBox::AcceptRole);
+    m_jumpButton.setText(translate_str(N_("_Jump")));
+    m_jumpButton.setIcon(QIcon::fromTheme("go-jump"));
+    QPushButton * btn_Close = bbox->button(QDialogButtonBox::Close);
     btn_Close->setText(translate_str(N_("_Close")));
     btn_Close->setIcon(QIcon::fromTheme("window-close"));
-    btn_Jump->setIcon(QIcon::fromTheme("go-jump"));
     hbox_footer->addWidget(bbox);
 
-    QObject::connect(&m_queueAndUnqueueButton, &QAbstractButton::clicked, [this]() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    connect(&m_closeAfterJump, &QCheckBox::checkStateChanged, [](Qt::CheckState state) {
+#else
+    connect(&m_closeAfterJump, &QCheckBox::stateChanged, [](int state) {
+#endif
+        aud_set_bool("audqt", "close_jtf_dialog", (state == Qt::Checked));
+    });
+
+    QObject::connect(&m_queueAndUnqueueButton, &QPushButton::clicked, [this]() {
         this->m_songListModel.toggleQueueSelected();
         this->updateQueueButton();
     });
 
-    QObject::connect(btn_Jump, &QAbstractButton::clicked, [this]() {
+    QObject::connect(&m_jumpButton, &QPushButton::clicked, [this]() {
         this->jumpToSelected();
     });
 
-    QObject::connect(bbox, &QDialogButtonBox::rejected, destroy_instance);
+    QObject::connect(btn_Close, &QPushButton::clicked, this, &QDialog::close);
     // **** END Bottom button bar ****
-
-    resize(500, 500);
 }
 
 void SongsWindow::keyPressEvent(QKeyEvent * event)
@@ -387,7 +403,7 @@ void SongsWindow::keyPressEvent(QKeyEvent * event)
     if (event->key() == Qt::Key_Return && event->modifiers() == Qt::ShiftModifier)
     {
         // Let Shift+Enter act as another shortcut for the Queue button
-        this->m_queueAndUnqueueButton.animateClick();
+        m_queueAndUnqueueButton.animateClick();
     }
 
     QDialog::keyPressEvent(event);
@@ -395,12 +411,18 @@ void SongsWindow::keyPressEvent(QKeyEvent * event)
 
 EXPORT void songwin_show()
 {
-    window_bring_to_front(SongsWindow::get_instance());
+    if (!s_songs_window)
+    {
+        s_songs_window = new SongsWindow;
+        s_songs_window->setAttribute(Qt::WA_DeleteOnClose);
+    }
+
+    window_bring_to_front(s_songs_window);
 }
 
 EXPORT void songwin_hide()
 {
-    SongsWindow::destroy_instance();
+    delete s_songs_window;
 }
 
 } // namespace audqt

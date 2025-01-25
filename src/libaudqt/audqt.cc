@@ -50,6 +50,7 @@ static const char * const audqt_defaults[] = {
     "eq_presets_visible", "FALSE",
     "equalizer_visible", "FALSE",
     "queue_manager_visible", "FALSE",
+    "close_jtf_dialog", "TRUE",
 #ifdef _WIN32
     "theme", "dark",
     "icon_theme", "audacious-flat-dark",
@@ -76,7 +77,7 @@ static void load_qt_translations()
         QApplication::installTranslator(&translators[1]);
 }
 
-void set_icon_theme(void)
+void set_icon_theme()
 {
     QIcon::setThemeName((QString)aud_get_str("audqt", "icon_theme"));
 
@@ -207,6 +208,7 @@ EXPORT void cleanup()
     log_inspector_hide();
     plugin_prefs_hide();
     prefswin_hide();
+    songwin_hide();
 
     log_cleanup();
 
